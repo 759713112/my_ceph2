@@ -272,6 +272,18 @@ public:
                     0);
   }
 
+  const std::string my_get_name(int idx) const
+  {
+    ceph_assert(idx > m_lower_bound);
+    ceph_assert(idx < m_upper_bound);
+    return m_data[idx - m_lower_bound - 1].name;
+    // std::vector<std::string> res;
+    // for (auto it : m_data) {
+    //   res.push_back(it.name);
+    // }
+    // return res;
+  }
+
 private:
   PerfCounters(CephContext *cct, const std::string &name,
 	     int lower_bound, int upper_bound);
@@ -380,3 +392,5 @@ public:
 
 }
 #endif
+
+

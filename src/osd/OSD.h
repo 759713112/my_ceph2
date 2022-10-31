@@ -1459,6 +1459,7 @@ private:
   ceph::mutex payloadBalance_lock = ceph::make_mutex("OSD::payloadBalance");
   std::map<int, int> debug_heartbeat_drops_remaining;
   ceph::condition_variable heartbeat_cond;
+  ceph::condition_variable payloadBalance_cond;
   bool heartbeat_stop;
   bool payloadBalance_stop;
   std::atomic<bool> heartbeat_need_update;
@@ -1510,6 +1511,9 @@ private:
   } heartbeat_thread;
 
 
+
+  void payloadBalance_entry();
+  void payloadBalance();
   struct T_PayloadBalance : public Thread {
     OSD *osd;
     explicit T_PayloadBalance(OSD *o) : osd(o) {}

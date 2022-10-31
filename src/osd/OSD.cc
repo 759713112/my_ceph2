@@ -2234,6 +2234,7 @@ OSD::OSD(CephContext *cct_,
   hb_back_server_messenger(hb_back_serverm),
   daily_loadavg(0.0),
   heartbeat_thread(this),
+  payloadBalance_thread(this),
   heartbeat_dispatcher(this),
   op_tracker(cct, cct->_conf->osd_enable_op_tracker,
                   cct->_conf->osd_num_op_tracker_shard),
@@ -3791,7 +3792,7 @@ int OSD::init()
 
   // start the heartbeat
   heartbeat_thread.create("osd_srv_heartbt");
-
+  payloadBalance_thread.create("osd_srv_plBalan");
   // tick
   tick_timer.add_event_after(get_tick_interval(),
 			     new C_Tick(this));
@@ -4394,6 +4395,14 @@ int OSD::shutdown()
   }
   heartbeat_thread.join();
 
+    {
+    std::lock_guard l{payloadBalance_lock};
+    payloadBalance_stop = true;
+    payloadBalance_cond.notify_all();
+    // heartbeat_peers.clear();
+  }
+  payloadBalance_thread.join();
+  
   hb_back_server_messenger->mark_down_all();
   hb_front_server_messenger->mark_down_all();
   hb_front_client_messenger->mark_down_all();
@@ -5872,23 +5881,32 @@ void OSD::payloadBalance_entry()
   if (is_stopping())
     return;
   while (!payloadBalance_stop) {
-    heartbeat();
+    payloadBalance();
 
     double wait;
     if (cct->_conf.get_val<bool>("debug_disable_randomized_ping")) {
       wait = (float)cct->_conf->osd_heartbeat_interval;
     } else {
-      wait = .5 + ((float)(rand() % 10)/10.0) * (float)cct->_conf->osd_heartbeat_interval;
+      wait = .5 + ((float)(rand() % 10)/10.0) * 3;
     }
     auto w = ceph::make_timespan(wait);
-    dout(30) << "heartbeat_entry sleeping for " << wait << dendl;
-    heartbeat_cond.wait_for(l, w);
+    dout(1) << "payloadBalance_entry sleeping for " << wait << dendl;
+    payloadBalance_cond.wait_for(l, w);
     if (is_stopping())
       return;
-    dout(30) << "heartbeat_entry woke up" << dendl;
+    dout(1) << "payloadBalance_entry woke up" << dendl;
   }
 }
-
+void OSD::payloadBalance() 
+{
+  // std::vector<std::string> names = logger->get_names();
+  // for (auto s: names) {
+  //   dout(1) << s << dendl;
+  // }
+  dout(1) << logger->my_get_name(l_osd_op) << dendl;
+  //std::pair<uint64_t, uint64_t> sum_count = logger->get_tavg_ns(10002);
+  
+}
 void OSD::heartbeat_check()
 {
   ceph_assert(ceph_mutex_is_locked(heartbeat_lock));
