@@ -437,6 +437,7 @@ private:
   bool prepare_mark_me_dead(MonOpRequestRef op);
 
   bool preprocess_full(MonOpRequestRef op);
+  bool preprocess_full_payload(MonOpRequestRef op);
   bool prepare_full(MonOpRequestRef op);
 
   bool preprocess_boot(MonOpRequestRef op);

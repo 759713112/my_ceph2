@@ -136,6 +136,9 @@ struct ceph_eversion {
 #define CEPH_OSD_NOOUT        (1<<11) /* osd can not be marked out */
 #define CEPH_OSD_STOP         (1<<12) /* osd has been stopped by admin */
 
+#define CEPH_OSD_FULL_PAYLOAD (1<<13) /* osd is at or above full payload threshold */
+#define CEPH_OSD_NEARFULL_PAYLOAD   (1<<14)  /* osd is at or above nearfull payload threshold */
+
 extern const char *ceph_osd_state_name(int s);
 
 /* osd weights.  fixed point value: 0x10000 == 1.0 ("in"), 0 == "out" */

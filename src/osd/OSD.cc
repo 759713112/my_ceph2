@@ -78,6 +78,7 @@
 #include "messages/MOSDMarkMeDown.h"
 #include "messages/MOSDMarkMeDead.h"
 #include "messages/MOSDFull.h"
+#include "messages/MOSDFullPayload.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
 #include "messages/MOSDBackoff.h"
@@ -206,6 +207,9 @@ using ceph::make_mutex;
 using namespace ceph::osd::scheduler;
 using TOPNSPC::common::cmd_getval;
 using TOPNSPC::common::cmd_getval_or;
+
+
+int OSD_PAYLOAD_BALANCE_INTERVAL = 5;
 
 static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
   return *_dout << "osd." << whoami << " " << epoch << " ";
@@ -5880,14 +5884,17 @@ void OSD::payloadBalance_entry()
   std::unique_lock l(payloadBalance_lock);
   if (is_stopping())
     return;
+  double wait = -1;
+  utime_t past_time = ceph_clock_now();
+  uint64_t past_op_count = 0;
   while (!payloadBalance_stop) {
-    payloadBalance();
+    payloadBalance(past_time, past_op_count);
 
-    double wait;
+
     if (cct->_conf.get_val<bool>("debug_disable_randomized_ping")) {
       wait = (float)cct->_conf->osd_heartbeat_interval;
     } else {
-      wait = .5 + ((float)(rand() % 10)/10.0) * 3;
+      wait = .5 + ((float)(rand() % 10)/10.0) * 3 + OSD_PAYLOAD_BALANCE_INTERVAL;
     }
     auto w = ceph::make_timespan(wait);
     dout(1) << "payloadBalance_entry sleeping for " << wait << dendl;
@@ -5897,16 +5904,72 @@ void OSD::payloadBalance_entry()
     dout(1) << "payloadBalance_entry woke up" << dendl;
   }
 }
-void OSD::payloadBalance() 
+int payload_balance_threshold_0 = 40;
+int payload_balance_threshold_1 = 50;
+int payload_balance_threshold_2 = 75;
+void OSD::payloadBalance(utime_t &past_time, uint64_t &past_op_count) 
 {
-  // std::vector<std::string> names = logger->get_names();
-  // for (auto s: names) {
-  //   dout(1) << s << dendl;
-  // }
-  dout(1) << logger->my_get_name(l_osd_op) << dendl;
-  //std::pair<uint64_t, uint64_t> sum_count = logger->get_tavg_ns(10002);
+  ceph_assert(ceph_mutex_is_locked_by_me(payloadBalance_lock));
+  uint64_t cur_osd_op = logger->get(l_osd_op);
+  dout(10) << __func__ << " osd op " << cur_osd_op << " "  << dendl; 
+  dout(10) << __func__ << " osd op r " << logger->get(l_osd_op_r) << " "  << dendl;
+  dout(10) << __func__ << " osd op rw " << logger->get(l_osd_op_rw) << " "   << dendl;  
+  utime_t interval = ceph_clock_now() - past_time;
+  uint64_t process_op_count = cur_osd_op - past_op_count;
+  double bandwidth = (double)process_op_count / interval; 
+  double weight22 = 1;
+  double pri_aff = 1;
+  if (!is_active()) {
+    goto outPayloadBalance;
+  }
+
+  if (past_op_count == 0) {
+    goto outPayloadBalance;
+  }
+  
+  
+  if (bandwidth > payload_balance_threshold_2) {
+    if (is_payload_full()) {
+      goto outPayloadBalance;
+    }
+    set_payload_state(PAYLOAD_STATE_FULL);
+    weight22 = 0.8;
+    pri_aff = 0.8;
+    dout(10) << __func__ << " want payload state " << get_pay_load_state_name(PAYLOAD_STATE_FULL) << dendl;
+    map_lock.lock_shared();
+    std::lock_guard l(mon_report_lock);
+    monc->send_mon_message(new MOSDFullPayload(get_osdmap_epoch(), state,
+                                                2, weight22, pri_aff));
+    map_lock.unlock_shared();
+  } else if (bandwidth > payload_balance_threshold_1) {
+    if (is_payload_near_full()) {
+      goto outPayloadBalance;
+    }
+    set_payload_state(PAYLOAD_STATE_NEAR_FULL);
+    pri_aff = 0.8;
+    dout(10) << __func__ << " want payload state " << get_pay_load_state_name(PAYLOAD_STATE_FULL) << dendl;
+    map_lock.lock_shared();
+    std::lock_guard l(mon_report_lock);
+    monc->send_mon_message(new MOSDFullPayload(get_osdmap_epoch(), state,
+                                                1, weight22, pri_aff));
+    map_lock.unlock_shared();
+  } else if (bandwidth < payload_balance_threshold_0 && !is_payload_well_off()) {
+    set_payload_state(PAYLOAD_STATE_WELL_OFF);
+    dout(10) << __func__ << " want payload state " << get_pay_load_state_name(PAYLOAD_STATE_FULL) << dendl;
+    map_lock.lock_shared();
+    std::lock_guard l(mon_report_lock);
+    monc->send_mon_message(new MOSDFullPayload(get_osdmap_epoch(), state, 
+                                                0, weight22, pri_aff));
+    map_lock.unlock_shared();
+
+  }
+ outPayloadBalance:
+  past_time = ceph_clock_now();
+  past_op_count = logger->get(l_osd_op);
   
 }
+
+
 void OSD::heartbeat_check()
 {
   ceph_assert(ceph_mutex_is_locked(heartbeat_lock));

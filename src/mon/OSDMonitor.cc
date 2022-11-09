@@ -59,6 +59,8 @@
 #include "messages/MMonGetPurgedSnaps.h"
 #include "messages/MMonGetPurgedSnapsReply.h"
 
+#include "messages/MOSDFullPayload.h"
+
 #include "common/TextTable.h"
 #include "common/Timer.h"
 #include "common/ceph_argparse.h"
@@ -2718,7 +2720,6 @@ bool OSDMonitor::preprocess_query(MonOpRequestRef op)
   op->mark_osdmon_event(__func__);
   Message *m = op->get_req();
   dout(10) << "preprocess_query " << *m << " from " << m->get_orig_source_inst() << dendl;
-
   switch (m->get_type()) {
     // READs
   case MSG_MON_COMMAND:
@@ -2763,6 +2764,10 @@ bool OSDMonitor::preprocess_query(MonOpRequestRef op)
   case MSG_MON_GET_PURGED_SNAPS:
     return preprocess_get_purged_snaps(op);
 
+
+  case MSG_OSD_FULL_PAYLOAD:
+    //return preprocess_full_payload(op);
+    return false;
   default:
     ceph_abort();
     return true;
@@ -2774,7 +2779,7 @@ bool OSDMonitor::prepare_update(MonOpRequestRef op)
   op->mark_osdmon_event(__func__);
   Message *m = op->get_req();
   dout(7) << "prepare_update " << *m << " from " << m->get_orig_source_inst() << dendl;
-
+  dout(10) << "prepare_update" << m->get_type() << dendl;
   switch (m->get_type()) {
     // damp updates
   case MSG_OSD_MARK_ME_DOWN:
@@ -2813,6 +2818,9 @@ bool OSDMonitor::prepare_update(MonOpRequestRef op)
   case MSG_REMOVE_SNAPS:
     return prepare_remove_snaps(op);
 
+
+  case MSG_OSD_FULL_PAYLOAD:
+    return preprocess_full_payload(op);
 
   default:
     ceph_abort();
@@ -3824,6 +3832,69 @@ bool OSDMonitor::preprocess_full(MonOpRequestRef op)
 
  ignore:
   return true;
+}
+
+bool OSDMonitor::preprocess_full_payload(MonOpRequestRef op) 
+{
+  op->mark_osdmon_event(__func__);
+  auto m = op->get_req<MOSDFullPayload>();
+  dout(10) << __func__ << "adjust weight" << dendl;
+  // osd crush reweight <name> <weight>
+  // CrushWrapper newcrush = _get_pending_crush();
+  std::stringstream ss;
+  std::string rs;
+  
+
+  int64_t id = 0;
+  if (id < 0) {
+    // ss << "device '" << name << "' is not a leaf in the crush map";
+    //err = -EINVAL;
+
+  }
+  double w = 0.8;
+  // int err = newcrush.adjust_item_weightf(cct, id, w,
+	// 			       g_conf()->osd_crush_update_weight_set);
+  // if (err < 0) {
+  //   return false;
+  // }
+  // pending_inc.crush.clear();
+  // newcrush.encode(pending_inc.crush, mon.get_quorum_con_features());
+  dout(10) << "reweighted item id " << id << "' to " << w
+       << " in crush map" << dendl;
+  //getline(ss, rs);
+    // wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
+		// 				  get_last_committed() + 1));
+
+
+    // if (!cmd_getval(cmdmap, "id", id)) {
+    //   ss << "unable to parse osd id value '"
+    //      << cmd_vartype_stringify(cmdmap.at("id")) << "'";
+    //   err = -EINVAL;
+    //   goto reply;
+    // }
+    w=0.8;
+    // if (!cmd_getval(cmdmap, "weight", w)) {
+    //   ss << "unable to parse weight value '"
+    //      << cmd_vartype_stringify(cmdmap.at("weight")) << "'";
+    //   err = -EINVAL;
+    //   goto reply;
+    // }
+  long ww = (int)((double)CEPH_OSD_IN*w);
+    if (ww < 0L) {
+      // ss << "weight must be >= 0";
+      // err = -EINVAL;
+    }
+    if (osdmap.exists(id)) {
+      pending_inc.new_weight[id] = ww;
+      dout(10) << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")" << dendl;
+
+      ss << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")";
+      getline(ss, rs);
+      wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->version));
+      force_immediate_propose();
+    }
+  return true;
+
 }
 
 bool OSDMonitor::prepare_full(MonOpRequestRef op)
@@ -12407,6 +12478,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       goto reply;
     }
   } else if (prefix == "osd reweight") {
+    dout(10) << "heeeeeeeeee" << dendl;
     int64_t id;
     if (!cmd_getval(cmdmap, "id", id)) {
       ss << "unable to parse osd id value '"

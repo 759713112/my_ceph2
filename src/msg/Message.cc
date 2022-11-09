@@ -66,6 +66,7 @@
 #include "messages/MOSDMarkMeDown.h"
 #include "messages/MOSDMarkMeDead.h"
 #include "messages/MOSDFull.h"
+#include "messages/MOSDFullPayload.h"
 #include "messages/MOSDPing.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
@@ -507,6 +508,9 @@ Message *decode_message(CephContext *cct,
     break;
   case MSG_OSD_FULL:
     m = make_message<MOSDFull>();
+    break;
+  case MSG_OSD_FULL_PAYLOAD:
+    m = make_message<MOSDFullPayload>();
     break;
   case MSG_OSD_PING:
     m = make_message<MOSDPing>();

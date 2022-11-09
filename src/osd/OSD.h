@@ -769,6 +769,7 @@ private:
   friend TestOpsSocketHook;
   mutable ceph::mutex full_status_lock = ceph::make_mutex("OSDService::full_status_lock");
   enum s_names { INVALID = -1, NONE, NEARFULL, BACKFILLFULL, FULL, FAILSAFE } cur_state;  // ascending
+  enum p_names { INVALID_PAYLOAD = -1, NONE_PAYLOAD, NEARFULL_PAYLOAD, BACKFILLFULL_PAYLOAD, FULL_PAYLOAD} cur_payload; // ascending
   const char *get_full_state_name(s_names s) const {
     switch (s) {
     case NONE: return "none";
@@ -1307,6 +1308,43 @@ public:
     return state == STATE_WAITING_FOR_HEALTHY;
   }
 
+// -- payload state --
+public:
+  typedef enum {
+    PAYLOAD_STATE_WELL_OFF = 1,
+    PAYLOAD_STATE_NEAR_FULL,
+    PAYLOAD_STATE_FULL,
+  } osd_payload_state_t;
+
+  static const char *get_pay_load_state_name(int s) {
+    switch (s) {
+    case PAYLOAD_STATE_WELL_OFF: return "well off";
+    case PAYLOAD_STATE_NEAR_FULL: return "near full";
+    case PAYLOAD_STATE_FULL: return "full";
+    default: return "???";
+    }
+  }
+
+private:
+  std::atomic<int> payload_state{PAYLOAD_STATE_WELL_OFF};
+
+public:
+  int get_payload_state() const {
+    return payload_state;
+  }
+  void set_payload_state(int s) {
+    payload_state = s;
+  }
+  bool is_payload_well_off() const {
+    return payload_state == PAYLOAD_STATE_WELL_OFF;
+  }
+  bool is_payload_near_full() const {
+    return state == PAYLOAD_STATE_NEAR_FULL;
+  }
+  bool is_payload_full() const {
+    return state == PAYLOAD_STATE_FULL;
+  }
+
 private:
 
   ShardedThreadPool osd_op_tp;
@@ -1513,7 +1551,7 @@ private:
 
 
   void payloadBalance_entry();
-  void payloadBalance();
+  void payloadBalance(utime_t &past_time, uint64_t &past_op_count);
   struct T_PayloadBalance : public Thread {
     OSD *osd;
     explicit T_PayloadBalance(OSD *o) : osd(o) {}
