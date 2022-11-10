@@ -3838,61 +3838,102 @@ bool OSDMonitor::preprocess_full_payload(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
   auto m = op->get_req<MOSDFullPayload>();
-  dout(10) << __func__ << "adjust weight" << dendl;
-  // osd crush reweight <name> <weight>
-  // CrushWrapper newcrush = _get_pending_crush();
-  std::stringstream ss;
-  std::string rs;
+  const int from = m->get_orig_source().num();
+  if (!osdmap.exists(from)) {
+     dout(10) << __func__ << "item " << from << "does not exist!" << dendl;
+  }
+  dout(10) << __func__ << "adjust payload state  osd :" << from << dendl;
   
+  if (m->if_osd_near_full()) {
+    dout(10) << __func__ << "osd " << from << " payload near full " << dendl;
+    double w = m->weight;
+    double pri_aff = m->pri_aff;
 
-  int64_t id = 0;
-  if (id < 0) {
-    // ss << "device '" << name << "' is not a leaf in the crush map";
-    //err = -EINVAL;
+    long ww = (int)((double)CEPH_OSD_IN*w);
+    if (ww < 0L) {
+      dout(10) << __func__ << "weight must be >= 0" << dendl;
+      return false;
+    }
+    pending_inc.new_weight[from] = ww;
+    dout(10) << "reweighted osd." << from << " to " << w << " (" << std::hex << ww << std::dec << ")" << dendl;
+    
+    if (osdmap.require_min_compat_client != ceph_release_t::unknown &&
+	        osdmap.require_min_compat_client < ceph_release_t::firefly) {
+      dout(10) << __func__ << "require_min_compat_client "
+	              << osdmap.require_min_compat_client
+	              << " < firefly, which is required for primary-affinity" << dendl;
+      return false;
+    }
+
+    long pri_affl = (int)((double)CEPH_OSD_MAX_PRIMARY_AFFINITY*pri_aff);
+    pending_inc.new_primary_affinity[from] = pri_affl;
+    dout(10) << "primary_affinity osd." << from << " to " << pri_aff << " (" << std::hex << pri_affl << std::dec << ")" << dendl;
+    
+    wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->version));
+    force_immediate_propose();
+
+  } else if (m->if_osd_full()) {
+    dout(10) << __func__ << "osd " << from << " payload full " << dendl;
+    dout(10) << __func__ << "state " << osdmap.get_state(from) << dendl;
+    const unsigned mask = CEPH_OSD_NEARFULL | CEPH_OSD_BACKFILLFULL | CEPH_OSD_FULL;
+    const unsigned want_state = mask;  // safety first
+
+    unsigned cur_state = osdmap.get_state(from);
+    auto p = pending_inc.new_state.find(from);
+    if (p != pending_inc.new_state.end()) {
+      cur_state ^= p->second;
+    }
+    cur_state &= mask;
+
+    set<string> want_state_set, cur_state_set;
+    OSDMap::calc_state_set(want_state, want_state_set);
+    OSDMap::calc_state_set(cur_state, cur_state_set);
+
+    if (cur_state != want_state) {
+      if (p != pending_inc.new_state.end()) {
+        p->second &= ~mask;
+      } else {
+        pending_inc.new_state[from] = 0;
+      }
+      pending_inc.new_state[from] |= (osdmap.get_state(from) & mask) ^ want_state;
+      dout(7) << __func__ << " osd." << from << " " << cur_state_set
+	      << " -> " << want_state_set << dendl;
+    } else {
+      dout(7) << __func__ << " osd." << from << " " << cur_state_set
+	      << " = wanted " << want_state_set << ", just waiting" << dendl;
+    }
+
+    wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->version));
+    force_immediate_propose();
+
+  } else {
+    dout(10) << __func__ << "osd " << from << " payload well off and go back " << dendl;
+    double w = 1;
+    double pri_aff = 1;
+
+    long ww = (int)((double)CEPH_OSD_IN*w);
+ 
+    pending_inc.new_weight[from] = ww;
+    dout(10) << "reweighted osd." << from << " to " << w << " (" << std::hex << ww << std::dec << ")" << dendl;
+    
+    if (osdmap.require_min_compat_client != ceph_release_t::unknown &&
+	        osdmap.require_min_compat_client < ceph_release_t::firefly) {
+      dout(10) << __func__ << "require_min_compat_client "
+	              << osdmap.require_min_compat_client
+	              << " < firefly, which is required for primary-affinity" << dendl;
+      return false;
+    }
+
+    long pri_affl = (int)((double)CEPH_OSD_MAX_PRIMARY_AFFINITY*pri_aff);
+    pending_inc.new_primary_affinity[from] = pri_affl;
+    dout(10) << "primary_affinity osd." << from << " to " << pri_aff << " (" << std::hex << pri_affl << std::dec << ")" << dendl;
+    
+    wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->version));
+    force_immediate_propose();
 
   }
-  double w = 0.8;
-  // int err = newcrush.adjust_item_weightf(cct, id, w,
-	// 			       g_conf()->osd_crush_update_weight_set);
-  // if (err < 0) {
-  //   return false;
-  // }
-  // pending_inc.crush.clear();
-  // newcrush.encode(pending_inc.crush, mon.get_quorum_con_features());
-  dout(10) << "reweighted item id " << id << "' to " << w
-       << " in crush map" << dendl;
-  //getline(ss, rs);
-    // wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-		// 				  get_last_committed() + 1));
-
-
-    // if (!cmd_getval(cmdmap, "id", id)) {
-    //   ss << "unable to parse osd id value '"
-    //      << cmd_vartype_stringify(cmdmap.at("id")) << "'";
-    //   err = -EINVAL;
-    //   goto reply;
-    // }
-    w=0.8;
-    // if (!cmd_getval(cmdmap, "weight", w)) {
-    //   ss << "unable to parse weight value '"
-    //      << cmd_vartype_stringify(cmdmap.at("weight")) << "'";
-    //   err = -EINVAL;
-    //   goto reply;
-    // }
-  long ww = (int)((double)CEPH_OSD_IN*w);
-    if (ww < 0L) {
-      // ss << "weight must be >= 0";
-      // err = -EINVAL;
-    }
-    if (osdmap.exists(id)) {
-      pending_inc.new_weight[id] = ww;
-      dout(10) << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")" << dendl;
-
-      ss << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")";
-      getline(ss, rs);
-      wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->version));
-      force_immediate_propose();
-    }
+  
+  
   return true;
 
 }

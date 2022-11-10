@@ -14,7 +14,7 @@ public:
   enum {
     FLAG_PAYLOAD_WELL_OFF = 0, 
     FLAG_PAYLOAD_NEAR_FULL = 1,      
-    FLAG_PAYLOAD_FULL = 2,    
+    FLAG_PAYLOAD_FULL = 2,
      
   };
   epoch_t map_epoch = 0;
